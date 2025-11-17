@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  usuarios-service:
+    build: ./usuarios-service
+    ports:
+      - "5001:5001"
+    depends_on:
+      - redis
+    restart: always
+
+  proyectos-service:
+    build: ./proyectos-service
+    ports:
+      - "5002:5002"
+    depends_on:
+      - usuarios-service
+    restart: always
+
+  tareas-service:
+    build: ./tareas-service
+    ports:
+      - "5003:5003"
+    depends_on:
+      - proyectos-service
+    restart: always
+  
+  gateway-service:
+    build: ./gateway-service
+    ports:
+      - "5000:5000"
+    environment:
+      - API_KEY=supersecreta123
+    depends_on:
+      - usuarios-service
+      - proyectos-service
+      - tareas-service
+
+
+  redis:
+    image: redis:7
+    container_name: redis-cache
+    ports:
+      - "6379:6379"
+    restart: always
+
+networks:
+  default:
+    name: tfu3_network

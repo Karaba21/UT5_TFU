@@ -1,0 +1,18 @@
+# Imagen base: Python
+FROM python:3.10-slim
+
+# Copiamos los archivos del servicio
+WORKDIR /app
+COPY . /app
+
+# Instalamos las dependencias que estén en requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Esta línea hace que los print() y logs se muestren al instante
+ENV PYTHONUNBUFFERED=1
+
+# Exponemos el puerto (debe coincidir con el del servicio)
+EXPOSE 5001
+
+# Ejecutamos la app
+CMD ["python", "app.py"]
