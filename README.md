@@ -1,8 +1,8 @@
-#  Trabajo Final Unidad 3 – Soluciones Arquitectónicas
+#  Trabajo Final Unidad 5 – Arquitectura Monolítica
 
 ##  Mini Gestor de Proyectos
 
-Este proyecto implementa una **arquitectura de microservicios** utilizando **Flask** y **Docker**, con tres servicios independientes que se comunican entre sí mediante **HTTP interno**.
+Este proyecto implementa una **arquitectura monolítica** utilizando **Flask** y **Docker**, con un único servicio que gestiona usuarios, proyectos y tareas mediante **blueprints** y **acceso directo a datos**.
 
 📹 [Aquí va un video explicativo del proyecto](https://drive.google.com/drive/folders/1vzmv4lIT7H1yjGgBBuUKAB06DZlHdZ-d?usp=sharing)
 
@@ -12,38 +12,45 @@ Este proyecto implementa una **arquitectura de microservicios** utilizando **Fla
 
 ##  Estructura general
 
-
-UT3-TFU/
+```
+UT5_TFU/
 │
-├── docker-compose.yml
+├── docker-compose.yaml
 │
-├── usuarios-service/
-│ ├── app.py
-│ ├── Dockerfile
-│ └── requirements.txt
-│
-├── proyectos-service/
-│ ├── app.py
-│ ├── Dockerfile
-│ └── requirements.txt
-│
-└── tareas-service/
-├── app.py
-├── Dockerfile
-└── requirements.txt
-
+└── monolito/
+    ├── app.py                    # Aplicación principal Flask
+    ├── Dockerfile
+    ├── requirements.txt
+    │
+    ├── controllers/              # Blueprints (endpoints)
+    │   ├── usuarios_controller.py
+    │   ├── proyectos_controller.py
+    │   └── tareas_controller.py
+    │
+    ├── services/                 # Lógica de negocio y acceso a datos
+    │   ├── usuarios_service.py
+    │   └── proyectos_service.py
+    │
+    └── middleware/               # Autenticación y autorización
+        └── auth.py               # Gatekeeper, Tokens, Valet Keys
+```
 
 ---
 
-##  Servicios
+##  Arquitectura Monolítica
 
-| Servicio | Puerto | Responsabilidad | Dependencias |
-|-----------|---------|----------------|---------------|
-| **usuarios-service** | 5001 | Gestiona usuarios (GET, POST) | — |
-| **proyectos-service** | 5002 | Gestiona proyectos (GET, POST). Valida usuario existente llamando al servicio de usuarios. | usuarios-service |
-| **tareas-service** | 5003 | Gestiona tareas (GET, POST). Valida proyecto existente llamando al servicio de proyectos. | proyectos-service |
+| Módulo | Responsabilidad | Dependencias |
+|--------|----------------|--------------|
+| **usuarios_controller** | Endpoints para gestión de usuarios (GET, POST) | usuarios_service |
+| **proyectos_controller** | Endpoints para gestión de proyectos (GET, POST). Valida usuario existente mediante acceso directo a datos. | proyectos_service, usuarios_service |
+| **tareas_controller** | Endpoints para gestión de tareas (GET, POST). Valida proyecto existente mediante acceso directo a datos. | proyectos_service |
 
-Cada servicio persiste sus datos localmente en un archivo JSON.
+**Características:**
+- **Un único servicio Flask** en el puerto 5000
+- **Acceso directo a datos**: Los módulos se comunican mediante llamadas directas a funciones, sin HTTP interno
+- **Blueprints**: Organización modular mediante Flask Blueprints
+- **Persistencia local**: Cada módulo persiste sus datos en archivos JSON separados
+- **Redis**: Utilizado para cache (Cache-Aside) y colas (Queue-Based Load Leveling)
 
 ---
 
@@ -58,60 +65,95 @@ Cada servicio persiste sus datos localmente en un archivo JSON.
 Desde la raíz del proyecto:
 ```bash
 docker compose up --build
+```
 
-Esto construye e inicia los tres servicios:
-usuarios-service  -> http://localhost:5001
-proyectos-service -> http://localhost:5002
-tareas-service    -> http://localhost:5003
+Esto construye e inicia:
+- **monolito** -> http://localhost:5000
+- **redis** -> localhost:6379 (para cache y colas)
 
-Cada uno tiene su propio contenedor y se comunican internamente mediante la red tfu3_network.
-La respuesta esperada es: 
-{"status": "ok"}
+La respuesta esperada en `/health` es: 
+```json
+{"status": "ok", "service": "monolito"}
+```
 
-Flujo de uso
-Crear un usuario
-Invoke-RestMethod -Uri http://localhost:5001/usuarios -Method POST -Body '{"nombre":"Claudio"}' -ContentType "application/json"
+###  Flujo de uso
 
-Crear un proyecto (Valida el usuario)
-Invoke-RestMethod -Uri http://localhost:5002/proyectos -Method POST -Body '{"nombre":"App UT3", "usuario_id":1}' -ContentType "application/json"
+**1. Generar un token de acceso:**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/tokens -Method POST
+```
 
-Crear una tarea (valida el proyecto)
-Invoke-RestMethod -Uri http://localhost:5003/tareas -Method POST -Body '{"nombre":"Diseñar endpoints", "proyecto_id":1}' -ContentType "application/json"
+**2. Crear un usuario:**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/usuarios -Method POST `
+  -Headers @{"X-API-Key"="<token>"} `
+  -Body '{"nombre":"Claudio"}' -ContentType "application/json"
+```
 
+**3. Crear un proyecto (Valida el usuario):**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/proyectos -Method POST `
+  -Headers @{"X-API-Key"="<token>"} `
+  -Body '{"nombre":"App UT5", "usuario_id":1}' -ContentType "application/json"
+```
 
-Listar la informacion
-Crear una tarea (valida el proyecto)
+**4. Crear una tarea (valida el proyecto):**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/tareas -Method POST `
+  -Headers @{"X-API-Key"="<token>"} `
+  -Body '{"nombre":"Diseñar endpoints", "proyecto_id":1}' -ContentType "application/json"
+```
 
-+--------------------+        +--------------------+        +--------------------+
-|  usuarios-service  |        | proyectos-service  |        |  tareas-service    |
-| (puerto 5001)      | <----> | (puerto 5002)      | <----> | (puerto 5003)      |
-|  Maneja usuarios   |        | Valida usuarios    |        | Valida proyectos   |
-+--------------------+        +--------------------+        +--------------------+
-El usuario se crea en usuarios-service.
+###  Arquitectura Interna
 
-proyectos-service consulta internamente al usuarios-service para validar el usuario_id.
+```
+┌─────────────────────────────────────────────────────────┐
+│                    MONOLITO (Puerto 5000)                │
+│                                                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
+│  │  Usuarios    │  │  Proyectos   │  │   Tareas     │ │
+│  │  Controller  │  │  Controller  │  │  Controller  │ │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘ │
+│         │                  │                  │         │
+│         └──────────┬───────┴──────────────────┘         │
+│                    │                                     │
+│         ┌──────────▼──────────┐                         │
+│         │   Services Layer     │                         │
+│         │  (Acceso directo)    │                         │
+│         └──────────┬───────────┘                         │
+│                    │                                     │
+│         ┌──────────▼──────────┐                         │
+│         │   Middleware Auth    │                         │
+│         │  (Gatekeeper/Valet)  │                         │
+│         └──────────────────────┘                         │
+└─────────────────────────────────────────────────────────┘
+                    │
+                    ▼
+         ┌──────────────────┐
+         │   Redis Cache    │
+         │   (Puerto 6379)  │
+         └──────────────────┘
+```
 
-tareas-service consulta internamente al proyectos-service para validar el proyecto_id.
+**Flujo de datos:**
+- El usuario se crea mediante `usuarios_controller`
+- `proyectos_controller` accede directamente a `usuarios_service` para validar el `usuario_id` (sin HTTP)
+- `tareas_controller` accede directamente a `proyectos_service` para validar el `proyecto_id` (sin HTTP)
 
 ## 🏗️ Arquitectura aplicada
 
-Partición por dominio funcional: cada microservicio representa un subdominio del sistema.
-
-Escalabilidad horizontal: cada servicio puede ejecutarse en múltiples instancias.
-
-Despliegue independiente: cada servicio se puede actualizar o reiniciar sin afectar a los demás.
-
-Comunicación HTTP interna: mediante la red Docker.
-
-Persistencia local: datos en formato JSON para simplicidad de la demo.
-
-Disponibilidad básica: endpoint /health para monitoreo.
+**Arquitectura monolítica unificada:**
+- **Un solo despliegue**: Todo el sistema en un único contenedor
+- **Comunicación directa**: Los módulos se comunican mediante llamadas a funciones, sin overhead de red
+- **Organización modular**: Blueprints para separación de responsabilidades
+- **Persistencia local**: Datos en formato JSON para simplicidad de la demo
+- **Disponibilidad básica**: Endpoint `/health` para monitoreo
 
 
 #  UT4 - Arquitectura Distribuida  
 ## DEMO DE PATRONES ARQUITECTÓNICOS  
 
-Este proyecto demuestra **patrones de arquitectura** aplicados sobre una arquitectura basada en **microservicios** con Flask, Docker y Redis.  
+Este proyecto demuestra **patrones de arquitectura** aplicados sobre una **arquitectura monolítica** con Flask, Docker y Redis.  
 Se incluyen patrones de **Disponibilidad**, **Rendimiento** y **Seguridad**, implementados y probados con ejemplos reales.
 
 ---
@@ -120,119 +162,223 @@ Se incluyen patrones de **Disponibilidad**, **Rendimiento** y **Seguridad**, imp
 
 ###  Health Endpoint Monitoring
 
-Permite monitorear si cada microservicio está activo y funcionando correctamente.
+Permite monitorear si el servicio monolítico está activo y funcionando correctamente.
 
 **Comandos de prueba:**
 ```powershell
-(iwr http://localhost:5001/health).Content   # USUARIOS  
-(iwr http://localhost:5002/health).Content   # PROYECTOS  
-(iwr http://localhost:5003/health).Content   # TAREAS  
-(iwr http://localhost:5000/health).Content   # GATEWAY  
+(iwr http://localhost:5000/health).Content   # MONOLITO
+```
 
 Respuesta esperada:
-{"status":"ok"}
+```json
+{"status":"ok","service":"monolito"}
+```
 
 Simulación de falla:
-(iwr http://localhost:5001/health).Content
-docker stop ut3-tfu-usuarios-service-1
-(iwr http://localhost:5001/health).Content
-docker start ut3-tfu-usuarios-service-1
+```powershell
+(iwr http://localhost:5000/health).Content
+docker stop ut5-tfu-monolito-1
+(iwr http://localhost:5000/health).Content
+docker start ut5-tfu-monolito-1
+```
 
 ### Circuit Breaker
 
-Controla fallos repetidos entre servicios para evitar saturar al sistema.
+Controla fallos repetidos en el acceso a datos para evitar saturar al sistema.
 
-El archivo circuit_state.json guarda:
+El archivo `circuit_state.json` guarda el estado del circuito (abierto/cerrado, contador de fallos).
 
-Simulación:
+**Simulación:**
 
-Intento crear un proyecto
-Invoke-RestMethod -Uri http://localhost:5000/proyectos/proyectos -Method POST `
--Headers @{"X-API-Key"="supersecreta123"} `
--Body '{"nombre":"App Prueba","usuario_id":1}' -ContentType "application/json"
+Intento crear un proyecto:
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/proyectos -Method POST `
+  -Headers @{"X-API-Key"="supersecreta123"} `
+  -Body '{"nombre":"App Prueba","usuario_id":999}' -ContentType "application/json"
+```
 
-Respuesta esperada:
+Respuesta esperada (si el usuario no existe o hay error):
+```json
 {"error":"Servicio de usuarios no disponible"}
+```
 
-Luego de 3 intentos:
+Luego de 3 intentos fallidos:
+```json
 {"error":"Circuito abierto: servicio de usuarios no disponible temporalmente"}
-
+```
 
 En los logs quedará registrado:
-Circuit breaker abierto: demasiadas fallas en usuarios-service.
+```
+⚠️ Circuit breaker abierto: demasiadas fallas en usuarios-service.
+```
 
-Reinicio el servicio:
-docker start ut3-tfu-usuarios-service-1
+El circuito se reinicia automáticamente después de 10 segundos.
 
 
-###Demo de rendimiento
-#Cache-Aside Pattern
+##  DEMO DE RENDIMIENTO
+
+### Cache-Aside Pattern
 
 Redis guarda temporalmente los proyectos consultados para mejorar el rendimiento.
 
-Comando:
-(iwr http://localhost:5000/proyectos/proyectos/1 -Headers @{"X-API-Key"="supersecreta123"}).Content
+**Comando:**
+```powershell
+(iwr http://localhost:5000/proyectos/1 -Headers @{"X-API-Key"="supersecreta123"}).Content
+```
 
-Funcionamiento:
+**Funcionamiento:**
 
-Si el proyecto está en Redis → se devuelve desde la cache.
+1. Si el proyecto está en Redis → se devuelve desde la cache (Cache hit).
+2. Si no está → se lee desde `proyectos.json` y luego se guarda en Redis:
+   ```python
+   cache.setex(cache_key, CACHE_TTL, json.dumps(proyecto))
+   ```
 
-Si no está → se lee desde proyectos.json y luego se guarda en Redis:
-cache.setex(cache_key, CACHE_TTL, json.dumps(proyecto))
+**Verificación:**
+- Primera llamada: Cache miss (lee del archivo)
+- Segunda llamada: Cache hit (lee de Redis)
 
-#Queue-Based Load Leveling
+### Queue-Based Load Leveling
+
 Redis actúa como una cola temporal de tareas para distribuir la carga.
 
-Invoke-RestMethod -Uri http://localhost:5003/tareas -Method POST `
--Body '{"nombre":"Tarea 1","proyecto_id":1}' -ContentType "application/json"
-
-{"mensaje":"Tarea encolada correctamente"}
-
-Comprobación en Redis:
-
-docker exec -it redis-cache redis-cli
-LRANGE tareas_pendientes 0 -1
-
-Se deberia ver:
-1) "{\"nombre\": \"Tarea 1\", \"proyecto_id\": 1}"
-2) "{\"nombre\": \"Tarea 2\", \"proyecto_id\": 1}"
-
-Verificar que tareas.json sigue vacío:
-
-docker exec -it ut3-tfu-tareas-service-1 cat tareas.json
-
-Procesar las tareas:
-Invoke-RestMethod -Uri http://localhost:5003/procesar_tareas -Method POST
-
-
-Verificar nuevamente:
-docker exec -it ut3-tfu-tareas-service-1 cat tareas.json
-
-Resultado:
-[
-  {"id": 1, "nombre": "Analizar logs", "proyecto_id": 5},
-  {"id": 2, "nombre": "Generar reporte", "proyecto_id": 3}
-]
-
-Logs esperados:
-Procesando tarea: Tarea 1
-
-###DEMO DE SEGURIDAD
-
-##Gatekeeper Pattern
-
-Centraliza la autenticación en el Gateway.
-Todas las peticiones deben pasar por gateway-service y contener una API Key válida.
-
-Sin API Key:
-Invoke-RestMethod -Uri http://localhost:5000/proyectos/proyectos
+**Encolar una tarea:**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/tareas -Method POST `
+  -Headers @{"X-API-Key"="supersecreta123"} `
+  -Body '{"nombre":"Tarea 1","proyecto_id":1}' -ContentType "application/json"
+```
 
 Respuesta:
-{"error":"Acceso denegado: API Key inválida"}
+```json
+{"mensaje":"Tarea encolada correctamente"}
+```
 
+**Comprobación en Redis:**
+```bash
+docker exec -it redis-cache redis-cli
+LRANGE tareas_pendientes 0 -1
+```
 
-Con API Key válida:
-Invoke-RestMethod -Uri http://localhost:5000/proyectos/proyectos -Headers @{"X-API-Key"="supersecreta123"}
+Se debería ver:
+```
+1) "{\"nombre\": \"Tarea 1\", \"proyecto_id\": 1}"
+2) "{\"nombre\": \"Tarea 2\", \"proyecto_id\": 1}"
+```
+
+**Verificar que tareas.json sigue vacío:**
+```bash
+docker exec -it ut5-tfu-monolito-1 cat tareas.json
+```
+
+**Procesar las tareas:**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/procesar_tareas -Method POST `
+  -Headers @{"X-API-Key"="supersecreta123"}
+```
+
+**Verificar nuevamente:**
+```bash
+docker exec -it ut5-tfu-monolito-1 cat tareas.json
+```
+
+Resultado esperado:
+```json
+[
+  {"id": 1, "nombre": "Tarea 1", "proyecto_id": 1},
+  {"id": 2, "nombre": "Tarea 2", "proyecto_id": 1}
+]
+```
+
+**Logs esperados:**
+```
+⚙️ Procesando tarea: Tarea 1
+⚙️ Procesando tarea: Tarea 2
+```
+
+##  DEMO DE SEGURIDAD
+
+### Gatekeeper Pattern
+
+Centraliza la autenticación en el middleware del monolito.
+Todas las peticiones deben contener una API Key válida o un token.
+
+**Sin API Key:**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/proyectos
+```
+
+Respuesta:
+```json
+{"error":"Token de acceso requerido. Use header 'Authorization: Bearer <token>' o 'X-API-Key: <token>'"}
+```
+
+**Con API Key válida:**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/proyectos -Headers @{"X-API-Key"="supersecreta123"}
+```
+
+### Generación de Tokens
+
+**Generar un token de acceso:**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/tokens -Method POST
+```
+
+Respuesta:
+```json
+{
+  "mensaje": "Token generado exitosamente",
+  "token": "<token_generado>",
+  "instrucciones": "Use este token en el header 'Authorization: Bearer <token>' o 'X-API-Key: <token>'"
+}
+```
+
+### Valet Key Pattern
+
+Genera tokens con permisos limitados y específicos (scopes, métodos HTTP, recursos).
+
+**Generar un Valet Key (requiere API Key del gateway):**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/valet-keys -Method POST `
+  -Headers @{"X-API-Key"="supersecreta123"} `
+  -Body '{
+    "scopes": ["read:proyectos"],
+    "allowed_methods": ["GET"],
+    "resource_constraints": {"proyecto_id": 1},
+    "expires_in_hours": 1
+  }' -ContentType "application/json"
+```
+
+Respuesta:
+```json
+{
+  "mensaje": "Valet Key generado exitosamente",
+  "valet_key": "<valet_key_token>",
+  "metadata": {
+    "scopes": ["read:proyectos"],
+    "allowed_methods": ["GET"],
+    "resource_constraints": {"proyecto_id": 1},
+    "expires_at": "2024-..."
+  }
+}
+```
+
+**Usar el Valet Key:**
+```powershell
+# ✅ Permitido: Leer proyecto con ID 1
+Invoke-RestMethod -Uri http://localhost:5000/proyectos/1 `
+  -Headers @{"X-API-Key"="<valet_key>"}
+
+# ❌ Denegado: Leer proyecto con ID 2 (fuera del scope)
+Invoke-RestMethod -Uri http://localhost:5000/proyectos/2 `
+  -Headers @{"X-API-Key"="<valet_key>"}
+
+# ❌ Denegado: Crear proyecto (método POST no permitido)
+Invoke-RestMethod -Uri http://localhost:5000/proyectos -Method POST `
+  -Headers @{"X-API-Key"="<valet_key>"} `
+  -Body '{"nombre":"Nuevo","usuario_id":1}' -ContentType "application/json"
+```
 
 
 
