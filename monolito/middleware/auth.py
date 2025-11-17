@@ -151,8 +151,8 @@ def gatekeeper_required(f):
             token_key = f"token:{token}"
             if not redis_client.exists(token_key):
                 try:
-                    with open(TOKENS_FILE) as f:
-                        tokens_data = json.load(f)
+                    with open(TOKENS_FILE) as tokens_file:
+                        tokens_data = json.load(tokens_file)
                     if token not in [t.get("token") for t in tokens_data]:
                         return jsonify({"error": "Token inválido o expirado"}), 403
                     redis_client.setex(token_key, 3600, "valid")

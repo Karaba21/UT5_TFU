@@ -1,4 +1,6 @@
 Flask
 redis
 requests
+spyne
+lxml
 
